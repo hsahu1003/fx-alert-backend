@@ -1,0 +1,19 @@
+{
+  "name": "fx-alert-backend",
+  "version": "1.0.0",
+  "description": "Backend for FX Alert App",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "node-fetch": "^2.6.7"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
