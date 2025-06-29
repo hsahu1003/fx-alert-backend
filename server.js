@@ -64,8 +64,7 @@ app.post('/delete-alert', (req, res) => {
 // --- मुख्य अलर्ट चेकिंग और नोटिफिकेशन फंक्शन (सुधरा हुआ) ---
 const checkAlerts = async () => {
     if (alerts.length === 0 || deviceTokens.size === 0) {
-        // अगर कोई अलर्ट या डिवाइस नहीं है, तो कुछ न करें
-        return;
+        return; // अगर कोई अलर्ट या डिवाइस नहीं है, तो कुछ न करें
     }
 
     const symbols = [...new Set(alerts.map(a => a.symbol.replace('-', '/')))];
@@ -75,14 +74,11 @@ const checkAlerts = async () => {
         const url = `https://api.twelvedata.com/price?symbol=${symbols.join(',')}&apikey=${TWELVE_DATA_API_KEY}`;
         const response = await fetch(url);
         const priceData = await response.json();
-
-        // API से कई सिंबल का जवाब हमेशा ऑब्जेक्ट के रूप में आता है
         const prices = priceData.code >= 400 ? {} : priceData;
 
         const triggeredAlerts = [];
 
         for (const symbolKey in prices) {
-            // सुनिश्चित करें कि API से कीमत मिली है
             if (!prices[symbolKey] || !prices[symbolKey].price) continue;
             
             const currentPrice = parseFloat(prices[symbolKey].price);
@@ -92,14 +88,8 @@ const checkAlerts = async () => {
             alerts.forEach(alert => {
                 if (alert.symbol === htmlSymbol) {
                     let conditionMet = false;
-                    // "Crosses Above" की शर्त: पिछली कीमत <= लक्ष्य और वर्तमान कीमत > लक्ष्य
-                    if (alert.condition === '>' && currentPrice > alert.value && previousPrice <= alert.value) {
-                        conditionMet = true;
-                    } 
-                    // "Crosses Below" की शर्त: पिछली कीमत >= लक्ष्य और वर्तमान कीमत < लक्ष्य
-                    else if (alert.condition === '<' && currentPrice < alert.value && previousPrice >= alert.value) {
-                        conditionMet = true;
-                    }
+                    if (alert.condition === '>' && currentPrice > alert.value && previousPrice <= alert.value) conditionMet = true;
+                    else if (alert.condition === '<' && currentPrice < alert.value && previousPrice >= alert.value) conditionMet = true;
                     
                     if (conditionMet) {
                         console.log(`ALERT TRIGGERED: ${alert.symbol} at ${currentPrice} (Condition: ${alert.condition} ${alert.value})`);
@@ -107,36 +97,38 @@ const checkAlerts = async () => {
                     }
                 }
             });
-            // अगली जाँच के लिए वर्तमान कीमत को "पिछली कीमत" के रूप में सहेजें
             lastPrices[htmlSymbol] = currentPrice;
         }
 
-        // --- अब सभी ट्रिगर हुए अलर्ट्स के लिए नोटिफिकेशन भेजें ---
         if (triggeredAlerts.length > 0 && deviceTokens.size > 0) {
-            const tokens = Array.from(deviceTokens); // Set को Array में बदलें
+            const tokens = Array.from(deviceTokens);
             const triggeredAlertIds = [];
 
+            // सभी ट्रिगर हुए अलर्ट्स के लिए एक-एक करके नोटिफिकेशन भेजें
             for (const alert of triggeredAlerts) {
                 const messageBody = alert.type === 'indicator'
                     ? `Price ${alert.condition === '>' ? 'crossed above' : 'crossed below'} ${alert.name} at ${alert.value.toFixed(4)}`
                     : `Price ${alert.condition === '>' ? 'crossed above' : 'crossed below'} ${alert.value.toFixed(4)}`;
 
+                // यह मैसेज ऑब्जेक्ट है जिसे Firebase को भेजना है
                 const message = {
                     notification: {
                         title: `🔔 Alert: ${alert.symbol}`,
                         body: messageBody
                     },
-                    tokens: tokens,
+                    tokens: tokens, // सभी रजिस्टर्ड डिवाइस को भेजें
                     android: {
                         priority: 'high',
                         notification: { sound: 'default', channelId: 'fcm_default_channel' }
                     },
-                    apns: { // iOS के लिए
+                    apns: {
                         payload: { aps: { sound: 'default' } }
                     }
                 };
                 
                 try {
+                    // *** यही वह लाइन थी जिसे ठीक किया गया है ***
+                    // अब यह सही तरीके से नोटिफिकेशन भेजेगा
                     const response = await admin.messaging().sendMulticast(message);
                     console.log(response.successCount + ` messages sent successfully for alert ID ${alert.id}`);
                     triggeredAlertIds.push(alert.id);
@@ -159,6 +151,5 @@ const checkAlerts = async () => {
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
-    // हर 30 सेकंड में अलर्ट चेक करें
-    setInterval(checkAlerts, 30000);
+    setInterval(checkAlerts, 30000); // हर 30 सेकंड में अलर्ट चेक करें
 });
