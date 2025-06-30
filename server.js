@@ -1,10 +1,9 @@
 const express = require('express');
-const cors = require('cors');
+const cors =require('cors');
 const fetch = require('node-fetch');
 const admin = require('firebase-admin');
 
 // --- Firebase सेटअप ---
-// सुनिश्चित करें कि आपकी 'firebase-service-account.json' फ़ाइल इसी फोल्डर में है
 const serviceAccount = require('./firebase-service-account.json');
 
 admin.initializeApp({
@@ -21,7 +20,7 @@ app.use(express.json());
 // --- ग्लोबल वैरिएबल्स ---
 const TWELVE_DATA_API_KEY = '211d01dc9a234426b787d02f8b8bd19a';
 let alerts = [];
-let deviceTokens = new Set(); // डिवाइस टोकन स्टोर करने के लिए
+let deviceTokens = new Set();
 let alertIdCounter = 1;
 let lastPrices = {};
 
@@ -30,7 +29,6 @@ app.get('/', (req, res) => {
     res.send('FX Alert Backend is running and ready for notifications!');
 });
 
-// डिवाइस टोकन रजिस्टर करने के लिए
 app.post('/register-device', (req, res) => {
     const { token } = req.body;
     if (token) {
@@ -61,10 +59,10 @@ app.post('/delete-alert', (req, res) => {
     res.status(200).json({ message: 'Alert deleted successfully' });
 });
 
-// --- मुख्य अलर्ट चेकिंग और नोटिफिकेशन फंक्शन (सुधरा हुआ) ---
+// --- मुख्य अलर्ट चेकिंग फंक्शन (अतिरिक्त लॉगिंग के साथ) ---
 const checkAlerts = async () => {
-    if (alerts.length === 0 || deviceTokens.size === 0) {
-        return; // अगर कोई अलर्ट या डिवाइस नहीं है, तो कुछ न करें
+    if (alerts.length === 0) {
+        return;
     }
 
     const symbols = [...new Set(alerts.map(a => a.symbol.replace('-', '/')))];
@@ -74,8 +72,11 @@ const checkAlerts = async () => {
         const url = `https://api.twelvedata.com/price?symbol=${symbols.join(',')}&apikey=${TWELVE_DATA_API_KEY}`;
         const response = await fetch(url);
         const priceData = await response.json();
-        const prices = priceData.code >= 400 ? {} : priceData;
+        
+        console.log("--- Checking Prices ---");
+        console.log("Fetched Prices from API:", priceData);
 
+        const prices = priceData.code >= 400 ? {} : priceData;
         const triggeredAlerts = [];
 
         for (const symbolKey in prices) {
@@ -85,14 +86,18 @@ const checkAlerts = async () => {
             const htmlSymbol = symbolKey.replace('/', '-');
             const previousPrice = lastPrices[htmlSymbol] || currentPrice;
 
+            console.log(`[DEBUG] Checking ${htmlSymbol}: Current=${currentPrice}, Previous=${previousPrice}`);
+
             alerts.forEach(alert => {
                 if (alert.symbol === htmlSymbol) {
                     let conditionMet = false;
+                    console.log(` -> Comparing Alert ID ${alert.id}: [${currentPrice} ${alert.condition} ${alert.value}] AND [Previous ${previousPrice} was opposite?]`);
+
                     if (alert.condition === '>' && currentPrice > alert.value && previousPrice <= alert.value) conditionMet = true;
                     else if (alert.condition === '<' && currentPrice < alert.value && previousPrice >= alert.value) conditionMet = true;
                     
                     if (conditionMet) {
-                        console.log(`ALERT TRIGGERED: ${alert.symbol} at ${currentPrice} (Condition: ${alert.condition} ${alert.value})`);
+                        console.log(`✅ ALERT TRIGGERED: ${alert.symbol} at ${currentPrice}`);
                         triggeredAlerts.push(alert);
                     }
                 }
@@ -102,54 +107,37 @@ const checkAlerts = async () => {
 
         if (triggeredAlerts.length > 0 && deviceTokens.size > 0) {
             const tokens = Array.from(deviceTokens);
-            const triggeredAlertIds = [];
+            const triggeredAlertIds = triggeredAlerts.map(a => a.id);
 
-            // सभी ट्रिगर हुए अलर्ट्स के लिए एक-एक करके नोटिफिकेशन भेजें
             for (const alert of triggeredAlerts) {
-                const messageBody = alert.type === 'indicator'
-                    ? `Price ${alert.condition === '>' ? 'crossed above' : 'crossed below'} ${alert.name} at ${alert.value.toFixed(4)}`
-                    : `Price ${alert.condition === '>' ? 'crossed above' : 'crossed below'} ${alert.value.toFixed(4)}`;
-
-                // यह मैसेज ऑब्जेक्ट है जिसे Firebase को भेजना है
+                const messageBody = `Price ${alert.condition === '>' ? 'crossed above' : 'crossed below'} ${alert.value.toFixed(4)}`;
                 const message = {
-                    notification: {
-                        title: `🔔 Alert: ${alert.symbol}`,
-                        body: messageBody
-                    },
-                    tokens: tokens, // सभी रजिस्टर्ड डिवाइस को भेजें
-                    android: {
-                        priority: 'high',
-                        notification: { sound: 'default', channelId: 'fcm_default_channel' }
-                    },
-                    apns: {
-                        payload: { aps: { sound: 'default' } }
-                    }
+                    notification: { title: `🔔 Alert: ${alert.symbol}`, body: messageBody },
+                    tokens: tokens,
+                    android: { priority: 'high', notification: { sound: 'default', channelId: 'fcm_default_channel' } },
+                    apns: { payload: { aps: { sound: 'default' } } }
                 };
                 
                 try {
-                    // *** यही वह लाइन थी जिसे ठीक किया गया है ***
-                    // अब यह सही तरीके से नोटिफिकेशन भेजेगा
                     const response = await admin.messaging().sendMulticast(message);
-                    console.log(response.successCount + ` messages sent successfully for alert ID ${alert.id}`);
-                    triggeredAlertIds.push(alert.id);
+                    console.log(`✅ Notification sent for alert ID ${alert.id}. Success: ${response.successCount}`);
                 } catch (error) {
-                    console.error(`Error sending message for alert ID ${alert.id}:`, error);
+                    console.error(`❌ Error sending notification for alert ID ${alert.id}:`, error);
                 }
             }
 
-            // जो अलर्ट्स भेजे जा चुके हैं, उन्हें मुख्य लिस्ट से हटा दें
-            if (triggeredAlertIds.length > 0) {
-                alerts = alerts.filter(a => !triggeredAlertIds.includes(a.id));
-                console.log(`Removed ${triggeredAlertIds.length} triggered alerts from the active list.`);
-            }
+            alerts = alerts.filter(a => !triggeredAlertIds.includes(a.id));
+            console.log(`Removed ${triggeredAlertIds.length} triggered alerts.`);
         }
 
     } catch (error) {
-        console.error('Error in checkAlerts function:', error.message);
+        console.error('❌ Error in checkAlerts function:', error.message);
     }
 };
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
-    setInterval(checkAlerts, 30000); // हर 30 सेकंड में अलर्ट चेक करें
+    // *** यहाँ बदलाव किया गया है ***
+    // 30000 (30 सेकंड) की जगह 60000 (60 सेकंड यानी 1 मिनट) कर दिया गया है
+    setInterval(checkAlerts, 60000); 
 });
