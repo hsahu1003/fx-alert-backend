@@ -77,13 +77,9 @@ const checkAlerts = async () => {
         console.log("Fetched Prices from API:", priceData);
 
         let prices = {};
-        // *** यहाँ मुख्य बदलाव किया गया है ***
-        // यह जाँचता है कि API ने एक सिंबल का जवाब दिया है या अनेक का
         if (priceData.price) {
-            // अगर एक सिंबल है, तो हम खुद सही फॉर्मेट बनाते हैं
             prices[symbols[0]] = priceData;
         } else if (priceData.code < 400) {
-            // अगर अनेक सिंबल हैं, तो हम API के जवाब का उपयोग करते हैं
             prices = priceData;
         }
 
@@ -94,17 +90,26 @@ const checkAlerts = async () => {
             
             const currentPrice = parseFloat(prices[symbolKey].price);
             const htmlSymbol = symbolKey.replace('/', '-');
-            const previousPrice = lastPrices[htmlSymbol] || currentPrice;
+            const previousPrice = lastPrices[htmlSymbol];
+            
+            if (previousPrice === undefined) {
+                lastPrices[htmlSymbol] = currentPrice;
+                continue;
+            }
 
             console.log(`[DEBUG] Checking ${htmlSymbol}: Current=${currentPrice}, Previous=${previousPrice}`);
 
             alerts.forEach(alert => {
                 if (alert.symbol === htmlSymbol) {
                     let conditionMet = false;
-                    console.log(` -> Comparing Alert ID ${alert.id}: [${currentPrice} ${alert.condition} ${alert.value}] AND [Previous ${previousPrice} was opposite?]`);
-
-                    if (alert.condition === '>' && currentPrice > alert.value && previousPrice <= alert.value) conditionMet = true;
-                    else if (alert.condition === '<' && currentPrice < alert.value && previousPrice >= alert.value) conditionMet = true;
+                    
+                    // *** यही वह एकीकृत लॉजिक है जो प्राइस और इंडिकेटर, दोनों अलर्ट पर काम करता है ***
+                    // अब यह ">=" और "<=" का उपयोग करता है ताकि कीमत के छूने पर भी अलर्ट बजे
+                    if (alert.condition === '>' && currentPrice >= alert.value && previousPrice < alert.value) {
+                        conditionMet = true;
+                    } else if (alert.condition === '<' && currentPrice <= alert.value && previousPrice > alert.value) {
+                        conditionMet = true;
+                    }
                     
                     if (conditionMet) {
                         console.log(`✅ ALERT TRIGGERED: ${alert.symbol} at ${currentPrice}`);
