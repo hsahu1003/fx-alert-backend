@@ -1,5 +1,5 @@
 const express = require('express');
-const cors =require('cors');
+const cors = require('cors');
 const fetch = require('node-fetch');
 const admin = require('firebase-admin');
 
@@ -59,7 +59,7 @@ app.post('/delete-alert', (req, res) => {
     res.status(200).json({ message: 'Alert deleted successfully' });
 });
 
-// --- मुख्य अलर्ट चेकिंग फंक्शन (अतिरिक्त लॉगिंग के साथ) ---
+// --- मुख्य अलर्ट चेकिंग फंक्शन (अंतिम सुधार के साथ) ---
 const checkAlerts = async () => {
     if (alerts.length === 0) {
         return;
@@ -76,7 +76,17 @@ const checkAlerts = async () => {
         console.log("--- Checking Prices ---");
         console.log("Fetched Prices from API:", priceData);
 
-        const prices = priceData.code >= 400 ? {} : priceData;
+        let prices = {};
+        // *** यहाँ मुख्य बदलाव किया गया है ***
+        // यह जाँचता है कि API ने एक सिंबल का जवाब दिया है या अनेक का
+        if (priceData.price) {
+            // अगर एक सिंबल है, तो हम खुद सही फॉर्मेट बनाते हैं
+            prices[symbols[0]] = priceData;
+        } else if (priceData.code < 400) {
+            // अगर अनेक सिंबल हैं, तो हम API के जवाब का उपयोग करते हैं
+            prices = priceData;
+        }
+
         const triggeredAlerts = [];
 
         for (const symbolKey in prices) {
@@ -137,7 +147,5 @@ const checkAlerts = async () => {
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
-    // *** यहाँ बदलाव किया गया है ***
-    // 30000 (30 सेकंड) की जगह 60000 (60 सेकंड यानी 1 मिनट) कर दिया गया है
-    setInterval(checkAlerts, 60000); 
+    setInterval(checkAlerts, 60000); // हर 1 मिनट में जाँच
 });
