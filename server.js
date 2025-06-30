@@ -45,6 +45,11 @@ app.post('/set-alert', (req, res) => {
     newAlert.id = alertIdCounter++;
     alerts.push(newAlert);
     console.log('New Alert Set:', newAlert);
+    // पहली बार के लिए पिछली कीमत को तुरंत सेट कर दें ताकि इंतज़ार न करना पड़े
+    const htmlSymbol = newAlert.symbol.replace('/', '-');
+    if (!lastPrices[htmlSymbol]) {
+        lastPrices[htmlSymbol] = 0; // एक शुरुआती वैल्यू
+    }
     res.status(200).json({ message: 'Alert set successfully', alert: newAlert });
 });
 
@@ -90,12 +95,10 @@ const checkAlerts = async () => {
             
             const currentPrice = parseFloat(prices[symbolKey].price);
             const htmlSymbol = symbolKey.replace('/', '-');
-            const previousPrice = lastPrices[htmlSymbol];
             
-            if (previousPrice === undefined) {
-                lastPrices[htmlSymbol] = currentPrice;
-                continue;
-            }
+            // *** यही वह लाइन है जिसे अंतिम बार ठीक किया गया है ***
+            // अगर पिछली कीमत 0 है (यानी पहली बार), तो उसे वर्तमान कीमत के बराबर मान लो
+            const previousPrice = lastPrices[htmlSymbol] === 0 ? currentPrice : lastPrices[htmlSymbol];
 
             console.log(`[DEBUG] Checking ${htmlSymbol}: Current=${currentPrice}, Previous=${previousPrice}`);
 
@@ -103,8 +106,6 @@ const checkAlerts = async () => {
                 if (alert.symbol === htmlSymbol) {
                     let conditionMet = false;
                     
-                    // *** यही वह एकीकृत लॉजिक है जो प्राइस और इंडिकेटर, दोनों अलर्ट पर काम करता है ***
-                    // अब यह ">=" और "<=" का उपयोग करता है ताकि कीमत के छूने पर भी अलर्ट बजे
                     if (alert.condition === '>' && currentPrice >= alert.value && previousPrice < alert.value) {
                         conditionMet = true;
                     } else if (alert.condition === '<' && currentPrice <= alert.value && previousPrice > alert.value) {
@@ -152,5 +153,5 @@ const checkAlerts = async () => {
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
-    setInterval(checkAlerts, 60000); // हर 1 मिनट में जाँच
+    setInterval(checkAlerts, 60000);
 });
